@@ -19,7 +19,6 @@ class LimelightApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        applyWatchDensity(resources.displayMetrics, resources.configuration)
         registerWatchUiCallbacks()
         AppTheme.applyStoredAppTheme(this)
         initializeFirebaseSafely()
@@ -28,25 +27,23 @@ class LimelightApplication : Application() {
         warmUpClientCertificate()
     }
 
-    override fun onConfigurationChanged(newConfig: Configuration) {
-        super.onConfigurationChanged(newConfig)
-        applyWatchDensity(resources.displayMetrics, resources.configuration)
-    }
-
     private fun isWatchScreen(dm: DisplayMetrics, config: Configuration): Boolean {
         val minPx = minOf(dm.widthPixels, dm.heightPixels)
         val isRound = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && config.isScreenRound
-        // 兼容圆屏标记以及 466x466 等小屏分辨率，确保手表安装后自动生效
         return isRound || (minPx in 1..520)
     }
 
-    private fun applyWatchDensity(dm: DisplayMetrics, config: Configuration) {
+    private fun applyWatchDensity(activity: Activity) {
+        // 串流页面 (Game) 保持原版原生密度与全屏显示，避免影响视频解码与 Surface 渲染导致黑屏
+        if (activity.javaClass.simpleName == "Game") return
+        val dm = activity.resources.displayMetrics
+        val config = activity.resources.configuration
         if (!isWatchScreen(dm, config)) return
         val minPx = minOf(dm.widthPixels, dm.heightPixels)
         if (minPx <= 0) return
 
-        // 466x466 圆形手表按 348dp 等效逻辑宽度缩放，使按钮与弹窗整体缩小适配表盘
-        val targetDensity = (minPx / 348f).coerceIn(0.75f, 2.5f)
+        // 466x466 圆形手表按 380dp 等效逻辑宽度缩放，保留更多纵向空间显示底部电脑图标
+        val targetDensity = (minPx / 380f).coerceIn(0.75f, 2.5f)
         val targetDpi = (targetDensity * DisplayMetrics.DENSITY_DEFAULT).toInt()
         val fontScale = config.fontScale.takeIf { it > 0f } ?: 1.0f
 
@@ -60,20 +57,20 @@ class LimelightApplication : Application() {
     private fun registerWatchUiCallbacks() {
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
             override fun onActivityPreCreated(activity: Activity, savedInstanceState: Bundle?) {
-                applyWatchDensity(activity.resources.displayMetrics, activity.resources.configuration)
+                applyWatchDensity(activity)
             }
 
             override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {
-                applyWatchDensity(activity.resources.displayMetrics, activity.resources.configuration)
+                applyWatchDensity(activity)
             }
 
             override fun onActivityStarted(activity: Activity) {
-                applyWatchDensity(activity.resources.displayMetrics, activity.resources.configuration)
+                applyWatchDensity(activity)
                 applyRoundSafePadding(activity)
             }
 
             override fun onActivityResumed(activity: Activity) {
-                applyWatchDensity(activity.resources.displayMetrics, activity.resources.configuration)
+                applyWatchDensity(activity)
                 applyRoundSafePadding(activity)
             }
 
@@ -85,23 +82,21 @@ class LimelightApplication : Application() {
     }
 
     private fun applyRoundSafePadding(activity: Activity) {
-        // 串流画面 Activity (Game) 需要全屏铺满，不加圆屏内边距
         if (activity.javaClass.simpleName == "Game") return
         val dm = activity.resources.displayMetrics
         val config = activity.resources.configuration
         if (!isWatchScreen(dm, config)) return
 
-        // 针对 466x466 圆形表盘：左右留 9% (~42px)、上下留 11% (~51px) 安全区，防止四角按钮被圆弧裁切
+        // 466x466 圆形表盘：四周留 6.5% (~30px) 紧凑安全区，兼顾防裁切与底部图标完整显示
         val minPx = minOf(dm.widthPixels, dm.heightPixels)
-        val hPad = (minPx * 0.09f).toInt()
-        val vPad = (minPx * 0.11f).toInt()
+        val pad = (minPx * 0.065f).toInt()
 
         val content = activity.findViewById<View>(android.R.id.content) ?: return
         content.post {
-            if (content.paddingLeft != hPad || content.paddingTop != vPad ||
-                content.paddingRight != hPad || content.paddingBottom != vPad
+            if (content.paddingLeft != pad || content.paddingTop != pad ||
+                content.paddingRight != pad || content.paddingBottom != pad
             ) {
-                content.setPadding(hPad, vPad, hPad, vPad)
+                content.setPadding(pad, pad, pad, pad)
             }
         }
     }
