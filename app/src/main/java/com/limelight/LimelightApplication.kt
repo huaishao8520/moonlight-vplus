@@ -8,6 +8,9 @@ import android.os.Bundle
 import android.util.DisplayMetrics
 import android.util.Log
 import android.view.View
+import android.view.ViewGroup
+import android.widget.AbsListView
+import android.widget.ScrollView
 
 import com.google.firebase.FirebaseApp
 import com.limelight.utils.AppTheme
@@ -34,7 +37,6 @@ class LimelightApplication : Application() {
     }
 
     private fun applyWatchDensity(activity: Activity) {
-        // 串流页面 (Game) 保持原版原生密度与全屏显示，避免影响视频解码与 Surface 渲染导致黑屏
         if (activity.javaClass.simpleName == "Game") return
         val dm = activity.resources.displayMetrics
         val config = activity.resources.configuration
@@ -42,8 +44,8 @@ class LimelightApplication : Application() {
         val minPx = minOf(dm.widthPixels, dm.heightPixels)
         if (minPx <= 0) return
 
-        // 466x466 圆形手表按 380dp 等效逻辑宽度缩放，保留更多纵向空间显示底部电脑图标
-        val targetDensity = (minPx / 380f).coerceIn(0.75f, 2.5f)
+        // 466x466 圆形手表按 385dp 等效逻辑宽度缩放，使按钮大小适配且不挤压底部图标
+        val targetDensity = (minPx / 385f).coerceIn(0.75f, 2.5f)
         val targetDpi = (targetDensity * DisplayMetrics.DENSITY_DEFAULT).toInt()
         val fontScale = config.fontScale.takeIf { it > 0f } ?: 1.0f
 
@@ -87,18 +89,87 @@ class LimelightApplication : Application() {
         val config = activity.resources.configuration
         if (!isWatchScreen(dm, config)) return
 
-        // 466x466 圆形表盘：四周留 6.5% (~30px) 紧凑安全区，兼顾防裁切与底部图标完整显示
         val minPx = minOf(dm.widthPixels, dm.heightPixels)
-        val pad = (minPx * 0.065f).toInt()
+        val hPad = (minPx * 0.07f).toInt()
+        val vPad = (minPx * 0.08f).toInt()
 
-        val content = activity.findViewById<View>(android.R.id.content) ?: return
+        val content = activity.findViewById<ViewGroup>(android.R.id.content) ?: return
         content.post {
-            if (content.paddingLeft != pad || content.paddingTop != pad ||
-                content.paddingRight != pad || content.paddingBottom != pad
+            // 不对 content 本身加 padding，确保背景全屏铺满圆形表盘不被切成矩形
+            if (content.paddingLeft != 0 || content.paddingTop != 0 ||
+                content.paddingRight != 0 || content.paddingBottom != 0
             ) {
-                content.setPadding(pad, pad, pad, pad)
+                content.setPadding(0, 0, 0, 0)
+            }
+            for (i in 0 until content.childCount) {
+                applyInsetsPreservingBackground(content.getChildAt(i), hPad, vPad, isRootChild = true)
             }
         }
+    }
+
+    private fun applyInsetsPreservingBackground(
+        view: View,
+        hPad: Int,
+        vPad: Int,
+        isRootChild: Boolean
+    ) {
+        val className = view.javaClass.name
+        // ComposeView 内部自带布局与背景，保持全屏铺满不裁切背景
+        if (className.contains("ComposeView")) return
+
+        val isScrollable = view is ScrollView ||
+            view is AbsListView ||
+            className.contains("RecyclerView") ||
+            className.contains("NestedScrollView")
+
+        if (isScrollable && view is ViewGroup) {
+            view.clipToPadding = false
+            val newLeft = maxOf(view.paddingLeft, hPad)
+            val newTop = maxOf(view.paddingTop, vPad)
+            val newRight = maxOf(view.paddingRight, hPad)
+            val newBottom = maxOf(view.paddingBottom, vPad)
+            if (view.paddingLeft != newLeft || view.paddingTop != newTop ||
+                view.paddingRight != newRight || view.paddingBottom != newBottom
+            ) {
+                view.setPadding(newLeft, newTop, newRight, newBottom)
+            }
+            return
+        }
+
+        if (view is ViewGroup) {
+            if (isRootChild && !hasScrollableDescendant(view)) {
+                view.clipToPadding = false
+                val newLeft = maxOf(view.paddingLeft, hPad)
+                val newTop = maxOf(view.paddingTop, vPad)
+                val newRight = maxOf(view.paddingRight, hPad)
+                val newBottom = maxOf(view.paddingBottom, vPad)
+                if (view.paddingLeft != newLeft || view.paddingTop != newTop ||
+                    view.paddingRight != newRight || view.paddingBottom != newBottom
+                ) {
+                    view.setPadding(newLeft, newTop, newRight, newBottom)
+                }
+            } else {
+                for (i in 0 until view.childCount) {
+                    applyInsetsPreservingBackground(view.getChildAt(i), hPad, vPad, isRootChild = false)
+                }
+            }
+        }
+    }
+
+    private fun hasScrollableDescendant(group: ViewGroup): Boolean {
+        for (i in 0 until group.childCount) {
+            val child = group.getChildAt(i)
+            val name = child.javaClass.name
+            if (child is ScrollView || child is AbsListView ||
+                name.contains("RecyclerView") || name.contains("NestedScrollView")
+            ) {
+                return true
+            }
+            if (child is ViewGroup && !name.contains("ComposeView") && hasScrollableDescendant(child)) {
+                return true
+            }
+        }
+        return false
     }
 
     private fun initializeFirebaseSafely() {
